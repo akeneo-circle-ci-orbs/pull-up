@@ -1,0 +1,213 @@
+version: 2.1
+
+description: |
+    Submit a pull request on github of the merge of the branch into another one
+
+display:
+    source_url: https://github.com/akeneo-circle-ci-orbs/pull-up/
+
+orbs:
+    slack: circleci/slack@3.4.2
+
+commands:
+    merge-with-pull-request:
+        description: |
+            Submit a pull request of a merge from one branch into another one
+        parameters:
+            from:
+                description: Name of the branch to merge from
+                type: string
+            into:
+                description: Name of the branch to merge into
+                type: string
+            branch_prefix:
+                description: Prefix of the branch created as the final result of the merge. This branch is used as the head branch to create the pull request.
+                type: string
+            checkout_ours:
+                default: ""
+                description: Optional list of files or pattern where it keeps the original file when there is a conflict. It executes "git checkout --ours your_file" on the file or the pattern. Each file or pattern should be separated by a space.
+                type: string
+            checkout_theirs:
+                default: ""
+                description: Optional list of files or pattern where it keep the version of the file that you merged in when there is a conflict. It executes "git checkout --ours your_file" on the file or the pattern. Each file or pattern should be separated by a space.
+                type: string
+            github_username:
+                description: Github username, mandatory to create the pull request
+                type: string
+            github_token:
+                default: GITHUB_TOKEN
+                description: Github token, mandatory to create the pull request
+                type: env_var_name
+
+        steps:
+            - checkout
+            - run:
+                name: "Merge and submit pull request"
+                command: |
+                    readonly GITHUB_TOKEN=${<< parameters.github_token >>}
+                    readonly GITHUB_USERNAME=<< parameters.github_username >>
+                    readonly FROM_BRANCH=<< parameters.from >>
+                    readonly INTO_BRANCH=<< parameters.into >>
+                    readonly BRANCH_PREFIX=<< parameters.branch_prefix >>
+                    readonly PR_BRANCH=${BRANCH_PREFIX}_$(date +%Y%m%d%H%M%S)
+                    readonly CHECKOUT_OURS="<< parameters.checkout_ours >>"
+                    readonly CHECKOUT_THEIRS="<< parameters.checkout_theirs >>"
+
+                    echo "Configuring git..."
+                    git config advice.detachedHead false
+                    git config user.email "micheltag@akeneo.com"
+                    git config user.name "$GITHUB_USERNAME"
+                    git remote set-url origin https://$GITHUB_USERNAME:$GITHUB_TOKEN@github.com/$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME.git
+
+                    echo "Merging branch $FROM_BRANCH into $INTO_BRANCH..."
+                    git checkout origin/$INTO_BRANCH
+                    git switch -c $PR_BRANCH
+                    git merge $FROM_BRANCH || echo "There are conlicts. It will try to fix them according to the provided merge configuration."
+
+                    if [[ ! -z "$CHECKOUT_OURS" ]]; then
+                        for pattern in $CHECKOUT_OURS; do
+                            git checkout --ours "$pattern"
+                            git add "$pattern"
+                        done
+                    fi
+
+                    if [[ ! -z "$CHECKOUT_THEIRS" ]]; then
+                        for pattern in $CHECKOUT_THEIRS; do
+                            git checkout --theirs "$pattern"
+                            git add "$pattern"
+                        done
+                    fi
+
+                    git status
+
+                    echo "Commit and push the result of this merge on Github into the branch $PR_BRANCH..."
+                    git commit -m "Merge $FROM_BRANCH into $FROM_BRANCH" || { echo "Aborting as there are some files unmerged." && exit 1; }
+                    git push --set-upstream origin $PR_BRANCH
+                    result=$(curl --fail -u $GITHUB_USERNAME:$GITHUB_TOKEN -X POST -d "{\"base\":\"$INTO_BRANCH\",\"head\":\"$PR_BRANCH\",\"title\":\"Pull up $FROM_BRANCH to $INTO_BRANCH\"}" https://api.github.com/repos/$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME/pulls)
+
+                    if [[ $? -ne 0 ]]; then
+                        echo "Failed to create the pull request"
+                        exit 1;
+                    fi
+
+                    readonly PULL_REQUEST_URL=$(echo $result | jq --raw-output .html_url)
+
+                    if [[ $? -ne 0 ]]; then
+                        echo "Failed to get the pull request url"
+                        exit 1;
+                    fi
+
+                    echo "export PULL_REQUEST_URL='$PULL_REQUEST_URL'" >> $BASH_ENV
+
+executors:
+    default:
+        docker:
+            - image: cimg/php:7.4.10
+
+jobs:
+    pull-up:
+        parameters:
+            from:
+                description: Name of the branch to merge from
+                type: string
+            into:
+                description: Name of the branch to merge into
+                type: string
+            branch_prefix:
+                description: Prefix of the branch created as the final result of the merge. This branch is used as the head branch to create the pull request.
+                type: string
+            checkout_ours:
+                default: ""
+                description: Optional list of files or pattern where it keeps the original file when there is a conflict. It executes "git checkout --ours your_file" on the file or the pattern. Each file or pattern should be separated by a space.
+                type: string
+            checkout_theirs:
+                default: ""
+                description: Optional list of files or pattern where it keep the version of the file that you merged in when there is a conflict. It executes "git checkout --ours your_file" on the file or the pattern. Each file or pattern should be separated by a space.
+                type: string
+            github_username:
+                description: Github username, mandatory to create the pull request
+                type: string
+            github_token:
+                default: GITHUB_TOKEN
+                description: Github token, mandatory to create the pull request
+                type: env_var_name
+            slack_webhook:
+                description: Webhook of the message to send in slack
+                type: string
+
+        executor: default
+        steps:
+            - merge-with-pull-request:
+                  from: << parameters.from >>
+                  into: << parameters.into >>
+                  branch_prefix: << parameters.branch_prefix >>
+                  checkout_ours: << parameters.checkout_ours >>
+                  checkout_theirs: << parameters.checkout_theirs >>
+                  github_username: << parameters.github_username >>
+                  github_token: << parameters.github_token >>
+            - slack/status:
+                  webhook: << parameters.slack_webhook >>
+                  failure_message: Merge of << parameters.from >> into << parameters.into >> failed.
+                  success_message: Merge of << parameters.from >> into << parameters.into >> is successfully done in pull request $PULL_REQUEST_URL
+                  include_job_number_field: false
+
+examples:
+    pull_up_branch_job:
+        description: |
+            Describe how to use the step to merge a branch into another one and propose the result in a pull request on Github, for an existing workflow.
+            If there is a conflict, it fails and does not create the pull request.
+
+            Useful if you want to add pre or post steps before merging the branch. Otherwise, you can directly use the job.
+        usage:
+            orbs:
+                pull-up: akeneo-orbs/pull-up@x.y
+            version: 2.1
+
+            jobs:
+                merge_to_next_version:
+                    docker:
+                        - image: cimg/php:7.4.10
+                    steps:
+                        - pull-up/merge-with-pull-request:
+                              from: "3.0"
+                              to: "3.2"
+                              branch_prefix: "30_to_32"
+                              checkout_ours: "src/translation.en_US.yml src/translation.fr_FR.yml"
+                              checkout_theirs: "src/translation.de_DE.yml"
+                              github_token: GITHUB_TOKEN_FOR_MERGE
+                              github_username: "my_github_user"
+
+            workflows:
+                pull_up:
+                    jobs:
+                        - merge_to_next_version:
+                          filters:
+                              branches:
+                                  only:
+                                      - "3.0"
+
+    pull_up_branch_workflow:
+        description: |
+            Describe how to use the job to merge a branch into another one and propose the result in a pull request on Github, for an existing workflow.
+            If there is a conflict, it fails and does not create the pull request. It notifies the result on Slack.
+        usage:
+            orbs:
+                pull-up: akeneo-orbs/pull-up@x.y
+            version: 2.1
+
+            workflows:
+                pull_up:
+                    jobs:
+                        - pull-up/pull-up:
+                              from: "3.0"
+                              into: "3.2"
+                              branch_prefix: "30_to_32"
+                              checkout_ours: "src/translation.en_US.yml src/translation.fr_FR.yml"
+                              checkout_theirs: "src/translation.de_DE.yml"
+                              github_token: GITHUB_TOKEN_FOR_MERGE
+                              github_username: "my_github_user"
+                              slack_webhook: "${SLACK_URL_PULL_UP}"
+                              filters:
+                                  branches:
+                                      only:
+                                          - "3.0"

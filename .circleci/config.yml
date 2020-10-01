@@ -1,0 +1,26 @@
+version: 2.1
+
+orbs:
+    orb-tools: circleci/orb-tools@2
+
+workflows:
+    publish_dev:
+        jobs:
+            - orb-tools/publish:
+                  orb-path: orb.yml
+                  orb-ref: "akeneo-orbs/pull-up@dev:${CIRCLE_BRANCH}"
+                  publish-token-variable: "$CIRCLECI_API_TOKEN"
+                  filters:
+                      branches:
+                          ignore: main
+
+    publish_prod:
+        jobs:
+            - orb-tools/increment:
+                  orb-path: orb.yml
+                  orb-ref: "akeneo-orbs/pull-up"
+                  segment: "patch"
+                  publish-token-variable: "$CIRCLECI_API_TOKEN"
+                  filters:
+                      branches:
+                          only: main
