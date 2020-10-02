@@ -1,7 +1,6 @@
 # Description
 
-This orbs is useful to merge a branch into another one push the result in a PR for approval. It can also notify on Slack if the merge is susccessful or not.
-
+This orb is useful to merge a branch into another one push the result in a PR for approval. It can also notify on Slack if the merge is successful or not.
 # Use case
 
 It allows to pull up fixes done in one branch to another one, automatically, when there is no merge conflict. For example, it can pull up a fix merged in branch 1.0 in the branch 2.0.
