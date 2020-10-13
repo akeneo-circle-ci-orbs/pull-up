@@ -81,7 +81,7 @@ commands:
                     git status
 
                     echo "Commit and push the result of this merge on Github into the branch $PR_BRANCH..."
-                    git commit -m "Merge $FROM_BRANCH into $FROM_BRANCH" || { echo "Aborting as there are some files unmerged." && exit 1; }
+                    git commit -m "Merge $FROM_BRANCH into $INTO_BRANCH" || { echo "Aborting as there are some files unmerged." && exit 1; }
                     git push --set-upstream origin $PR_BRANCH
                     result=$(curl --fail -u $GITHUB_USERNAME:$GITHUB_TOKEN -X POST -d "{\"base\":\"$INTO_BRANCH\",\"head\":\"$PR_BRANCH\",\"title\":\"Pull up $FROM_BRANCH to $INTO_BRANCH\"}" https://api.github.com/repos/$CIRCLE_PROJECT_USERNAME/$CIRCLE_PROJECT_REPONAME/pulls)
 
